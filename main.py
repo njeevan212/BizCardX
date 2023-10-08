@@ -15,7 +15,7 @@ if not hasattr(PIL.Image, 'Resampling'):  # Pillow<9.0
 st.title('Business Card Data Extraction')
 
 with st.sidebar:
-    selected = option_menu(None, ["Home", "Upload & Extract", "Modify"],
+    selected = option_menu(None, ["Home", "Process Card", "Modify"],
                          icons=['collection', 'cloud-upload', 'pencil-square'],
                          menu_icon="youtube", default_index=0,
                          styles={
@@ -56,22 +56,23 @@ mycursor.execute("""CREATE TABLE IF NOT EXISTS bizcardx.card_data(
                     pin_code VARCHAR(10),
                     image LONGBLOB)""")
 
-# HOME MENU
+# Home menu : List out the updated data available in DB
 if selected == "Home":
-    col1,col2 = st.columns(2)
-    with col1:
-        st.markdown("## :green[**Technologies Used :**] Python,easy OCR, Streamlit, SQL, Pandas")
-        st.markdown("## :green[**Overview :**] In this streamlit web app you can upload an image of a business card and extract relevant information from it using easyOCR. You can view, modify or delete the extracted data in this app. This app would also allow users to save the extracted information into a database along with the uploaded business card image. The database would be able to store multiple entries, each with its own business card image and extracted information.")
+    mycursor.execute("SELECT company_name,card_holder,designation,mobile_number,email,website,area,city,state,pin_code FROM bizcardx.card_data")
+    updated_df = pd.DataFrame(mycursor.fetchall(),columns=["Company_Name","Card_Holder","Designation","Mobile_Number","Email","Website","Area","City","State","Pin_Code"])
+    st.write(updated_df)
+    
     
         
         
-# UPLOAD AND EXTRACT MENU
-if selected == "Upload & Extract":
+# Upload card & process it, finally save it in DB
+if selected == "Process Card":
     st.markdown("### Upload a Business Card")
     uploaded_card = st.file_uploader("upload here",label_visibility="collapsed",type=["png","jpeg","jpg"])
         
     if uploaded_card is not None:
         
+        #To save the uploaded card
         def save_card(uploaded_card):
             with open(os.path.join("uploaded_cards",uploaded_card.name), "wb") as f:
                 f.write(uploaded_card.getbuffer())   
@@ -92,14 +93,14 @@ if selected == "Upload & Extract":
             plt.axis('off')
             plt.imshow(image)
         
-        # DISPLAYING THE UPLOADED CARD
+        # To show uploaded image
         col1,col2 = st.columns(2,gap="large")
         with col1:
             st.markdown("#     ")
             st.markdown("#     ")
             st.markdown("### You have uploaded the card")
             st.image(uploaded_card)
-        # DISPLAYING THE CARD WITH HIGHLIGHTS
+        #To show processed image
         with col2:
             st.markdown("#     ")
             st.markdown("#     ")
@@ -112,13 +113,12 @@ if selected == "Upload & Extract":
                 st.pyplot(image_preview(image,res))  
                 
             
-        #easy OCR
+        #To read text from image using easy OCR
         saved_img = os.getcwd()+ "//" + "uploaded_cards"+ "//"+ uploaded_card.name
         result = reader.readtext(saved_img,detail = 0,paragraph=False)
         
-        # CONVERTING IMAGE TO BINARY TO UPLOAD TO SQL DATABASE
+        # convert an image to bytearray
         def img_to_binary(file):
-            # Convert image data to binary format
             with open(file, 'rb') as file:
                 binaryData = file.read()
             return binaryData
@@ -200,7 +200,7 @@ if selected == "Upload & Extract":
                     data["pin_code"].append(i[10:])
         get_data(result)
         
-        #FUNCTION TO CREATE DATAFRAME
+        #To show the extracted data
         def create_df(data):
             df = pd.DataFrame(data)
             return df
@@ -210,28 +210,23 @@ if selected == "Upload & Extract":
         
         if st.button("Upload to Database"):
             for i,row in df.iterrows():
-                #here %S means string values 
-                sql = """INSERT INTO bizcardx.card_data(company_name,card_holder,designation,mobile_number,email,website,area,city,state,pin_code,image)
+                query = """INSERT INTO bizcardx.card_data(company_name,card_holder,designation,mobile_number,email,website,area,city,state,pin_code,image)
                          VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)"""
-                mycursor.execute(sql, tuple(row))
-                # the connection is not auto committed by default, so we must commit to save our changes
+                mycursor.execute(query, tuple(row))
                 mydb.commit()
             st.success("#### Uploaded to database successfully!")
         
 # MODIFY MENU    
 if selected == "Modify":
-    col1,col2,col3 = st.columns([3,3,2])
-    col2.markdown("## Alter or Delete the data here")
-    column1,column2 = st.columns(2,gap="large")
+    
     try:
-        with column1:
             mycursor.execute("SELECT card_holder FROM bizcardx.card_data")
             result = mycursor.fetchall()
             business_cards = {}
             for row in result:
                 business_cards[row[0]] = row[0]
-            selected_card = st.selectbox("Select a card holder name to update", list(business_cards.keys()))
-            st.markdown("#### Update or modify any data below")
+            selected_card = st.selectbox("Select a card holder name to View", list(business_cards.keys()))
+            st.markdown("#### Update or Delete the below data")
             mycursor.execute("SELECT company_name,card_holder,designation,mobile_number,email,website,area,city,state,pin_code FROM bizcardx.card_data WHERE card_holder=%s",
                             (selected_card,))
             result = mycursor.fetchone()
@@ -247,32 +242,21 @@ if selected == "Modify":
             city = st.text_input("City", result[7])
             state = st.text_input("State", result[8])
             pin_code = st.text_input("Pin_Code", result[9])
+            
+            col1,col2 = st.columns(2,gap="large")
+            with col1 :
+                if st.button("Commit changes to DB"):
+                    mycursor.execute("""UPDATE bizcardx.card_data SET company_name=%s,card_holder=%s,designation=%s,mobile_number=%s,email=%s,website=%s,area=%s,city=%s,state=%s,pin_code=%s
+                                        WHERE card_holder=%s""", (company_name,card_holder,designation,mobile_number,email,website,area,city,state,pin_code,selected_card))
+                    mydb.commit()
+                    st.success("Information updated successfully.")
+            with col2:
+                if st.button("Yes Delete Business Card"):
+                    mycursor.execute(f"DELETE FROM bizcardx.card_data WHERE card_holder='{selected_card}'")
+                    mydb.commit()
+                    st.success("Business card information deleted.")
 
-            if st.button("Commit changes to DB"):
-                # Update the information for the selected business card in the database
-                mycursor.execute("""UPDATE bizcardx.card_data SET company_name=%s,card_holder=%s,designation=%s,mobile_number=%s,email=%s,website=%s,area=%s,city=%s,state=%s,pin_code=%s
-                                    WHERE card_holder=%s""", (company_name,card_holder,designation,mobile_number,email,website,area,city,state,pin_code,selected_card))
-                mydb.commit()
-                st.success("Information updated in database successfully.")
-
-        with column2:
-            mycursor.execute("SELECT card_holder FROM bizcardx.card_data")
-            result = mycursor.fetchall()
-            business_cards = {}
-            for row in result:
-                business_cards[row[0]] = row[0]
-            selected_card = st.selectbox("Select a card holder name to Delete", list(business_cards.keys()))
-            st.write(f"### You have selected :green[**{selected_card}'s**] card to delete")
-            st.write("#### Proceed to delete this card?")
-
-            if st.button("Yes Delete Business Card"):
-                mycursor.execute(f"DELETE FROM bizcardx.card_data WHERE card_holder='{selected_card}'")
-                mydb.commit()
-                st.success("Business card information deleted from database.")
+        
     except:
-        st.warning("There is no data available in the database")
+        st.warning("There is no data available fo selected card")
     
-    if st.button("View updated data"):
-        mycursor.execute("SELECT company_name,card_holder,designation,mobile_number,email,website,area,city,state,pin_code FROM bizcardx.card_data")
-        updated_df = pd.DataFrame(mycursor.fetchall(),columns=["Company_Name","Card_Holder","Designation","Mobile_Number","Email","Website","Area","City","State","Pin_Code"])
-        st.write(updated_df)
